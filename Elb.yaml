@@ -1,0 +1,121 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: "AWS CloudFormation template to set up an Auto Scaling group across multiple AZs with SNS notifications."
+
+### Parameters Section ###
+Parameters:
+  InstanceType:
+    Description: EC2 instance type
+    Type: String
+    Default: t2.micro
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instances
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: Must be the name of an existing EC2 KeyPair.
+  NotificationEmail:
+    Description: Email address to send Auto Scaling notifications
+    Type: String
+
+### Resources Section ###
+
+Resources:
+  
+  # Launch Configuration for EC2 Instances #
+  LaunchConfig:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties: 
+      ImageId: ami-0abcdef1234567890 # Replace with a valid AMI ID
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      SecurityGroups: 
+        - sg-12345678 # Replace with a valid security group ID
+  
+  # Auto Scaling Group with Multi-AZ #
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier:
+        - subnet-12345678 # Replace with valid subnet IDs
+        - subnet-87654321
+      LaunchConfigurationName: !Ref LaunchConfig
+      MinSize: 1
+      MaxSize: 5
+      DesiredCapacity: 2
+      HealthCheckType: EC2
+      HealthCheckGracePeriod: 300
+      NotificationConfigurations:
+        - NotificationTypes:
+            - autoscaling:EC2_INSTANCE_LAUNCH
+            - autoscaling:EC2_INSTANCE_TERMINATE
+          TopicARN: !Ref SNSNotificationTopic
+
+  # Scaling Policies #
+  ScaleUpPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref AutoScalingGroup
+      PolicyType: SimpleScaling
+      AdjustmentType: ChangeInCapacity
+      ScalingAdjustment: 1
+      Cooldown: 300
+
+  ScaleDownPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref AutoScalingGroup
+      PolicyType: SimpleScaling
+      AdjustmentType: ChangeInCapacity
+      ScalingAdjustment: -1
+      Cooldown: 300
+
+  # CloudWatch Alarms to Trigger Scaling Policies #
+  CPUAlarmHigh:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "Scale-up if CPU > 70% for 5 minutes"
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 70
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions: 
+        - !Ref ScaleUpPolicy
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref AutoScalingGroup
+
+  CPUAlarmLow:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "Scale-down if CPU < 30% for 5 minutes"
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 30
+      ComparisonOperator: LessThanThreshold
+      AlarmActions: 
+        - !Ref ScaleDownPolicy
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref AutoScalingGroup
+
+  # SNS Topic for Notifications #
+  SNSNotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      Subscription:
+        - Endpoint: !Ref NotificationEmail
+          Protocol: email
+
+### Outputs Section ###
+
+Outputs:
+  AutoScalingGroupName:
+    Value: !Ref AutoScalingGroup
+    Description: The name of the Auto Scaling group
+  SNSNotificationTopicARN:
+    Value: !Ref SNSNotificationTopic
+    Description: The ARN of the SNS notification topic
